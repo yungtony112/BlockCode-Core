@@ -41,7 +41,7 @@ Wszystkie dane runtime są trzymane w szybkiej pamięci RAM, a operacje krytyczn
 
 ## Wymagania
 
-- Paper / Purpur / Spigot **1.17+**
+- Paper / Purpur / Spigot **1.21+**
 - Java **17+**
 - [Skript 2.7+](https://github.com/SkriptLang/Skript)
 - [MongoSK 2.x](https://github.com/Romitou/MongoSK)
