@@ -1,0 +1,1084 @@
+# ============================================================
+# BlockCode-Core v1.0-SNAPSHOT (Beta)
+# Wymagania: Skript 2.7+, MongoSK 2.x, Paper/Spigot 1.17+
+# Autor: Tony_Maxi dc:youngtony_112
+# ============================================================
+
+options:
+    prefix: &8[&bBlockCode&8]&r
+    primary: &b
+    secondary: &3
+    success: &a
+    error: &c
+    info: &7
+    combat-time: 15
+    starting-balance: 1000
+    currency-name: Coin
+    currency-name-plural: Coins
+    max-homes-default: 3
+    max-homes-vip: 7
+    max-homes-admin: 15
+    rtp-min-range: 500
+    rtp-max-range: 5000
+    rtp-cooldown: 60
+    afk-time: 300
+    mongo-uri: mongodb://localhost:27017
+    mongo-database: blockcode
+
+# ==================== POLACZENIE MONGODB ====================
+
+on load:
+    delete {mongo::client}
+    set {mongo::client} to a new mongo client with connection string "{@mongo-uri}"
+    set {mongo::db} to mongo database named "{@mongo-database}" of {mongo::client}
+    set {mongo::players} to mongo collection named "players" of {mongo::db}
+    set {mongo::warps} to mongo collection named "warps" of {mongo::db}
+    set {mongo::server} to mongo collection named "server" of {mongo::db}
+    send "&8[&bBlockCode&8] &aMongoDB connected! DB: {@mongo-database}" to console
+
+on unload:
+    close mongo client {mongo::client}
+    send "&8[&bBlockCode&8] &cMongoDB disconnected." to console
+
+# ==================== FUNKCJE MONGODB ====================
+
+function mongoSavePlayer(uuid: text, key: text, val: text):
+    set {_filter} to a new mongo filter where field "uuid" is {_uuid}
+    set {_update} to a new mongo update setting field {_key} to {_val}
+    update {_filter} with {_update} with upsert in {mongo::players}
+
+function mongoSavePlayerNum(uuid: text, key: text, val: number):
+    set {_filter} to a new mongo filter where field "uuid" is {_uuid}
+    set {_update} to a new mongo update setting field {_key} to {_val}
+    update {_filter} with {_update} with upsert in {mongo::players}
+
+function mongoGetPlayer(uuid: text, key: text) :: text:
+    set {_filter} to a new mongo filter where field "uuid" is {_uuid}
+    set {_doc} to first mongo document filtered by {_filter} of {mongo::players}
+    if {_doc} is set:
+        set {_val} to mongo value {_key} of {_doc}
+        return "%{_val}%"
+    return ""
+
+function mongoGetPlayerNum(uuid: text, key: text) :: number:
+    set {_filter} to a new mongo filter where field "uuid" is {_uuid}
+    set {_doc} to first mongo document filtered by {_filter} of {mongo::players}
+    if {_doc} is set:
+        set {_val} to mongo value {_key} of {_doc}
+        if {_val} is set:
+            return {_val}
+    return 0
+
+function mongoIncPlayer(uuid: text, key: text, amount: number):
+    set {_filter} to a new mongo filter where field "uuid" is {_uuid}
+    set {_update} to a new mongo update incrementing field {_key} by {_amount}
+    update {_filter} with {_update} with upsert in {mongo::players}
+
+function mongoSaveLocation(uuid: text, key: text, loc: location):
+    set {_x} to x-coord of {_loc}
+    set {_y} to y-coord of {_loc}
+    set {_z} to z-coord of {_loc}
+    set {_w} to "%world of {_loc}%"
+    set {_yaw} to yaw of {_loc}
+    set {_pitch} to pitch of {_loc}
+    set {_locStr} to "%{_x}%;;%{_y}%;;%{_z}%;;%{_w}%;;%{_yaw}%;;%{_pitch}%"
+    mongoSavePlayer({_uuid}, {_key}, {_locStr})
+
+function mongoGetLocation(uuid: text, key: text) :: location:
+    set {_str} to mongoGetPlayer({_uuid}, {_key})
+    if {_str} is "":
+        return {_null}
+    set {_parts::*} to {_str} split by ";;"
+    set {_x} to {_parts::1} parsed as number
+    set {_y} to {_parts::2} parsed as number
+    set {_z} to {_parts::3} parsed as number
+    set {_w} to {_parts::4}
+    set {_yaw} to {_parts::5} parsed as number
+    set {_pitch} to {_parts::6} parsed as number
+    set {_loc} to location({_x}, {_y}, {_z}, world({_w}))
+    return {_loc}
+
+function mongoSaveHome(uuid: text, name: text, loc: location):
+    set {_key} to "homes.%{_name}%"
+    mongoSaveLocation({_uuid}, {_key}, {_loc})
+
+function mongoGetHome(uuid: text, name: text) :: location:
+    set {_key} to "homes.%{_name}%"
+    return mongoGetLocation({_uuid}, {_key})
+
+function mongoDeleteHome(uuid: text, name: text):
+    set {_key} to "homes.%{_name}%"
+    set {_filter} to a new mongo filter where field "uuid" is {_uuid}
+    set {_update} to a new mongo update unsetting field {_key}
+    update {_filter} with {_update} in {mongo::players}
+
+function mongoSaveWarp(name: text, loc: location, creator: text):
+    set {_x} to x-coord of {_loc}
+    set {_y} to y-coord of {_loc}
+    set {_z} to z-coord of {_loc}
+    set {_w} to "%world of {_loc}%"
+    set {_yaw} to yaw of {_loc}
+    set {_pitch} to pitch of {_loc}
+    set {_locStr} to "%{_x}%;;%{_y}%;;%{_z}%;;%{_w}%;;%{_yaw}%;;%{_pitch}%"
+    set {_filter} to a new mongo filter where field "name" is {_name}
+    set {_update} to a new mongo update setting field "location" to {_locStr}
+    set {_update2} to a new mongo update setting field "creator" to {_creator}
+    update {_filter} with {_update} with upsert in {mongo::warps}
+    update {_filter} with {_update2} in {mongo::warps}
+
+function mongoGetWarp(name: text) :: location:
+    set {_filter} to a new mongo filter where field "name" is {_name}
+    set {_doc} to first mongo document filtered by {_filter} of {mongo::warps}
+    if {_doc} is not set:
+        return {_null}
+    set {_str} to mongo value "location" of {_doc}
+    set {_parts::*} to {_str} split by ";;"
+    set {_x} to {_parts::1} parsed as number
+    set {_y} to {_parts::2} parsed as number
+    set {_z} to {_parts::3} parsed as number
+    set {_w} to {_parts::4}
+    set {_loc} to location({_x}, {_y}, {_z}, world({_w}))
+    return {_loc}
+
+function mongoDeleteWarp(name: text):
+    set {_filter} to a new mongo filter where field "name" is {_name}
+    delete {_filter} from {mongo::warps}
+
+function mongoSaveSpawn(loc: location): # Autor: Tony_Maxi dc:youngtony_112
+    set {_x} to x-coord of {_loc}
+    set {_y} to y-coord of {_loc}
+    set {_z} to z-coord of {_loc}
+    set {_w} to "%world of {_loc}%"
+    set {_yaw} to yaw of {_loc}
+    set {_pitch} to pitch of {_loc}
+    set {_locStr} to "%{_x}%;;%{_y}%;;%{_z}%;;%{_w}%;;%{_yaw}%;;%{_pitch}%"
+    set {_filter} to a new mongo filter where field "key" is "spawn"
+    set {_update} to a new mongo update setting field "value" to {_locStr}
+    update {_filter} with {_update} with upsert in {mongo::server}
+
+function mongoGetSpawn() :: location:
+    set {_filter} to a new mongo filter where field "key" is "spawn"
+    set {_doc} to first mongo document filtered by {_filter} of {mongo::server}
+    if {_doc} is not set:
+        return {_null}
+    set {_str} to mongo value "value" of {_doc}
+    set {_parts::*} to {_str} split by ";;"
+    set {_x} to {_parts::1} parsed as number
+    set {_y} to {_parts::2} parsed as number
+    set {_z} to {_parts::3} parsed as number
+    set {_w} to {_parts::4}
+    set {_loc} to location({_x}, {_y}, {_z}, world({_w}))
+    return {_loc}
+
+# ==================== CACHE DANYCH ====================
+
+function loadPlayerData(p: player):
+    set {_uuid} to "%{_p}'s uuid%"
+    set {eco::balance::%{_uuid}%} to mongoGetPlayerNum({_uuid}, "balance")
+    if {eco::balance::%{_uuid}%} is 0:
+        set {eco::balance::%{_uuid}%} to {@starting-balance}
+        mongoSavePlayerNum({_uuid}, "balance", {@starting-balance})
+    set {eco::name::%{_uuid}%} to "%{_p}%"
+    mongoSavePlayer({_uuid}, "name", "%{_p}%")
+    set {stats::kills::%{_uuid}%} to mongoGetPlayerNum({_uuid}, "kills")
+    set {stats::deaths::%{_uuid}%} to mongoGetPlayerNum({_uuid}, "deaths")
+    set {stats::playtime::%{_uuid}%} to mongoGetPlayerNum({_uuid}, "playtime")
+    set {stats::blocksBroken::%{_uuid}%} to mongoGetPlayerNum({_uuid}, "blocksBroken")
+    set {stats::blocksPlaced::%{_uuid}%} to mongoGetPlayerNum({_uuid}, "blocksPlaced")
+    set {stats::mobKills::%{_uuid}%} to mongoGetPlayerNum({_uuid}, "mobKills")
+    set {stats::joins::%{_uuid}%} to mongoGetPlayerNum({_uuid}, "joins")
+    set {stats::streak::%{_uuid}%} to mongoGetPlayerNum({_uuid}, "streak")
+    set {stats::combatlogs::%{_uuid}%} to mongoGetPlayerNum({_uuid}, "combatlogs")
+    set {chat::color::%{_uuid}%} to mongoGetPlayer({_uuid}, "chatcolor")
+    if {chat::color::%{_uuid}%} is "":
+        set {chat::color::%{_uuid}%} to "&f"
+
+function savePlayerData(p: player):
+    set {_uuid} to "%{_p}'s uuid%"
+    mongoSavePlayerNum({_uuid}, "balance", {eco::balance::%{_uuid}%})
+    mongoSavePlayer({_uuid}, "name", "%{_p}%")
+    mongoSavePlayerNum({_uuid}, "kills", {stats::kills::%{_uuid}%})
+    mongoSavePlayerNum({_uuid}, "deaths", {stats::deaths::%{_uuid}%})
+    mongoSavePlayerNum({_uuid}, "playtime", {stats::playtime::%{_uuid}%})
+    mongoSavePlayerNum({_uuid}, "blocksBroken", {stats::blocksBroken::%{_uuid}%})
+    mongoSavePlayerNum({_uuid}, "blocksPlaced", {stats::blocksPlaced::%{_uuid}%})
+    mongoSavePlayerNum({_uuid}, "mobKills", {stats::mobKills::%{_uuid}%})
+    mongoSavePlayerNum({_uuid}, "joins", {stats::joins::%{_uuid}%})
+    mongoSavePlayerNum({_uuid}, "streak", {stats::streak::%{_uuid}%})
+    mongoSavePlayerNum({_uuid}, "combatlogs", {stats::combatlogs::%{_uuid}%})
+    mongoSavePlayer({_uuid}, "chatcolor", {chat::color::%{_uuid}%})
+
+every 5 minutes:
+    loop all players:
+        savePlayerData(loop-player)
+    send "&8[&bBlockCode&8] &aAuto-save: synchronizacja z MongoDB zakonczona." to console
+
+# ==================== JOIN / QUIT ====================
+
+on first join:
+    set {_uuid} to "%player's uuid%"
+    set {eco::balance::%{_uuid}%} to {@starting-balance}
+    set {eco::name::%{_uuid}%} to player's name
+    set {stats::kills::%{_uuid}%} to 0
+    set {stats::deaths::%{_uuid}%} to 0
+    set {stats::playtime::%{_uuid}%} to 0
+    set {stats::blocksBroken::%{_uuid}%} to 0
+    set {stats::blocksPlaced::%{_uuid}%} to 0
+    set {stats::mobKills::%{_uuid}%} to 0
+    set {stats::joins::%{_uuid}%} to 1
+    set {stats::streak::%{_uuid}%} to 0
+    set {stats::combatlogs::%{_uuid}%} to 0
+    set {chat::color::%{_uuid}%} to "&f"
+    mongoSavePlayerNum({_uuid}, "balance", {@starting-balance})
+    mongoSavePlayer({_uuid}, "name", player's name)
+    mongoSavePlayerNum({_uuid}, "kills", 0)
+    mongoSavePlayerNum({_uuid}, "deaths", 0)
+    mongoSavePlayerNum({_uuid}, "playtime", 0)
+    mongoSavePlayerNum({_uuid}, "blocksBroken", 0)
+    mongoSavePlayerNum({_uuid}, "blocksPlaced", 0)
+    mongoSavePlayerNum({_uuid}, "mobKills", 0)
+    mongoSavePlayerNum({_uuid}, "joins", 1)
+    mongoSavePlayerNum({_uuid}, "streak", 0)
+    mongoSavePlayerNum({_uuid}, "combatlogs", 0)
+    mongoSavePlayer({_uuid}, "chatcolor", "&f")
+    broadcast ""
+    broadcast "  {@primary}Witaj {@secondary}%player% {@primary}na serwerze!"
+    broadcast ""
+    set {_spawn} to mongoGetSpawn()
+    if {_spawn} is set:
+        teleport player to {_spawn}
+
+on join:
+    loadPlayerData(player)
+    add 1 to {stats::joins::%player's uuid%}
+    set join message to "{@prefix} {@success}+ {@secondary}%player% {@info}dolaczyl!"
+    set tablist header of player to "&8&m                              %nl%&b&lBlockCode-Core%nl%&8&m                              %nl%"
+    set tablist footer of player to "%nl%&7Online: &e%number of all players%%nl%&8&m                              "
+    wait 5 ticks
+    send title "&b&lBlockCode" with subtitle "&7Witaj, &e%player%&7!" to player for 3 seconds with fade in 1 second and fade out 1 second
+
+on quit:
+    set quit message to "{@prefix} {@error}- {@secondary}%player% {@info}wyszedl."
+    if {combat::%player's uuid%} is set:
+        broadcast "{@prefix} {@error}%player% wylogowal sie podczas walki!"
+        kill player
+        delete {combat::%player's uuid%}
+        delete {combat::opponent::%player's uuid%}
+        remove 100 from {eco::balance::%player's uuid%}
+        if {eco::balance::%player's uuid%} < 0:
+            set {eco::balance::%player's uuid%} to 0
+        add 1 to {stats::combatlogs::%player's uuid%}
+    savePlayerData(player)
+
+# ==================== EKONOMIA ====================
+
+command /money [<text>] [<offlineplayer>] [<number>]:
+    aliases: /bal, /balance, /coins
+    trigger:
+        if arg-1 is not set:
+            send ""
+            send "  {@primary}Twoje saldo: {@secondary}%{eco::balance::%player's uuid%}% {@currency-name-plural}"
+            send ""
+            stop
+        if arg-1 is "pay":
+            if arg-2 is not set or arg-3 is not set:
+                send "{@prefix} {@error}/money pay <gracz> <kwota>"
+                stop
+            if arg-3 <= 0:
+                send "{@prefix} {@error}Kwota musi byc > 0!"
+                stop
+            if arg-2 is player:
+                send "{@prefix} {@error}Nie mozesz placic sobie!"
+                stop
+            if {eco::balance::%player's uuid%} < arg-3:
+                send "{@prefix} {@error}Brak srodkow!"
+                stop
+            remove arg-3 from {eco::balance::%player's uuid%}
+            add arg-3 to {eco::balance::%arg-2's uuid%}
+            mongoSavePlayerNum("%player's uuid%", "balance", {eco::balance::%player's uuid%})
+            mongoSavePlayerNum("%arg-2's uuid%", "balance", {eco::balance::%arg-2's uuid%})
+            send "{@prefix} {@success}Przelano %{arg-3}% do %arg-2%"
+            if arg-2 is online:
+                send "{@prefix} {@success}Otrzymales %{arg-3}% od %player%" to arg-2
+            stop
+        if arg-1 is "top":
+            send ""
+            send "  {@primary}Top 10 Najbogatszych"
+            send ""
+            set {_docs} to all mongo documents of {mongo::players}
+            delete {_sorted::*}
+            delete {_names::*}
+            set {_size} to 0
+            loop {_docs}:
+                set {_bal} to mongo value "balance" of loop-value
+                set {_name} to mongo value "name" of loop-value
+                if {_bal} is set:
+                    add 1 to {_size}
+                    set {_sorted::%{_size}%} to {_bal}
+                    set {_names::%{_size}%} to {_name}
+            set {_n} to {_size}
+            loop {_n} times:
+                set {_i} to loop-number
+                loop {_n} - {_i} times:
+                    set {_j} to loop-number-2
+                    if {_sorted::%{_j}%} < {_sorted::%{_j}+1%}:
+                        set {_tmp} to {_sorted::%{_j}%}
+                        set {_sorted::%{_j}%} to {_sorted::%{_j}+1%}
+                        set {_sorted::%{_j}+1%} to {_tmp}
+                        set {_tmpN} to {_names::%{_j}%}
+                        set {_names::%{_j}%} to {_names::%{_j}+1%}
+                        set {_names::%{_j}+1%} to {_tmpN}
+            set {_limit} to min({_size}, 10)
+            loop {_limit} times:
+                set {_i} to loop-number
+                send "  {@secondary}#%{_i}% &7%{_names::%{_i}%}% &8- {@primary}%{_sorted::%{_i}%}%"
+            send ""
+            stop
+        if arg-1 is "set" or "give" or "take":
+            if player doesn't have permission "blockcode.eco.admin":
+                send "{@prefix} {@error}Brak uprawnien!"
+                stop
+            if arg-2 is not set or arg-3 is not set:
+                send "{@prefix} {@error}/money %arg-1% <gracz> <kwota>"
+                stop
+            if arg-1 is "set":
+                set {eco::balance::%arg-2's uuid%} to arg-3
+            else if arg-1 is "give":
+                add arg-3 to {eco::balance::%arg-2's uuid%}
+            else if arg-1 is "take":
+                remove arg-3 from {eco::balance::%arg-2's uuid%}
+                if {eco::balance::%arg-2's uuid%} < 0:
+                    set {eco::balance::%arg-2's uuid%} to 0
+            mongoSavePlayerNum("%arg-2's uuid%", "balance", {eco::balance::%arg-2's uuid%})
+            send "{@prefix} {@success}Wykonano: %arg-1% %arg-3% dla %arg-2%"
+            stop
+        send "{@prefix} {@info}/money | /money pay | /money top"
+
+# ==================== HOMES ====================
+
+function getMaxHomes(p: player) :: integer:
+    if {_p} has permission "blockcode.homes.admin":
+        return {@max-homes-admin}
+    if {_p} has permission "blockcode.homes.vip":
+        return {@max-homes-vip}
+    return {@max-homes-default}
+
+command /sethome [<text>]:
+    trigger:
+        set {_name} to arg-1 ? "home"
+        set {_name} to {_name} in lower case
+        set {_uuid} to "%player's uuid%"
+        set {_filter} to a new mongo filter where field "uuid" is {_uuid}
+        set {_doc} to first mongo document filtered by {_filter} of {mongo::players}
+        set {_count} to 0
+        if {_doc} is set:
+            set {_homes} to mongo value "homes" of {_doc}
+            if {_homes} is set:
+                set {_existing} to mongo value "homes.%{_name}%" of {_doc}
+                if {_existing} is not set:
+                    loop {home::count::%{_uuid}%::*}:
+                        add 1 to {_count}
+                    if {_count} >= getMaxHomes(player):
+                        send "{@prefix} {@error}Limit domow osiagniety!"
+                        stop
+        mongoSaveHome({_uuid}, {_name}, player's location)
+        set {home::count::%{_uuid}%::%{_name}%} to true
+        send "{@prefix} {@success}Dom %{_name}% zapisany do bazy!"
+
+command /home [<text>]:
+    trigger:
+        set {_name} to arg-1 ? "home"
+        set {_name} to {_name} in lower case
+        set {_uuid} to "%player's uuid%"
+        if {combat::%{_uuid}%} is set:
+            send "{@prefix} {@error}Nie podczas walki!"
+            stop
+        set {_loc} to mongoGetHome({_uuid}, {_name})
+        if {_loc} is not set:
+            send "{@prefix} {@error}Dom %{_name}% nie istnieje! /homes"
+            stop
+        send "{@prefix} {@info}Teleportacja za 3s... Nie ruszaj sie!"
+        set {_startLoc} to player's location
+        set {tp::pending::%{_uuid}%} to true
+        wait 3 seconds
+        if {tp::pending::%{_uuid}%} is not set:
+            stop
+        if distance between player's location and {_startLoc} > 1:
+            send "{@prefix} {@error}Anulowano - ruszyles sie!"
+            delete {tp::pending::%{_uuid}%}
+            stop
+        delete {tp::pending::%{_uuid}%}
+        teleport player to {_loc}
+        send "{@prefix} {@success}Teleportowano do %{_name}%!"
+        play sound "entity.enderman.teleport" at player
+
+on move:
+    {tp::pending::%player's uuid%} is set
+    if location of player's block is not location of (block at event-player's location):
+        delete {tp::pending::%player's uuid%}
+
+command /delhome [<text>]:
+    trigger:
+        set {_name} to arg-1 ? "home"
+        set {_name} to {_name} in lower case
+        set {_uuid} to "%player's uuid%"
+        set {_loc} to mongoGetHome({_uuid}, {_name})
+        if {_loc} is not set:
+            send "{@prefix} {@error}Dom nie istnieje!"
+            stop
+        mongoDeleteHome({_uuid}, {_name})
+        delete {home::count::%{_uuid}%::%{_name}%}
+        send "{@prefix} {@success}Dom %{_name}% usuniety z bazy!"
+
+command /homes:
+    trigger:
+        set {_uuid} to "%player's uuid%"
+        set {_filter} to a new mongo filter where field "uuid" is {_uuid}
+        set {_doc} to first mongo document filtered by {_filter} of {mongo::players}
+        send ""
+        send "  {@primary}Twoje Domy"
+        set {_count} to 0
+        if {_doc} is set:
+            set {_homes} to mongo value "homes" of {_doc}
+            if {_homes} is set:
+                loop {home::count::%{_uuid}%::*}:
+                    add 1 to {_count}
+                    set {_n} to loop-index
+                    set {_locStr} to mongoGetPlayer({_uuid}, "homes.%{_n}%")
+                    set {_parts::*} to {_locStr} split by ";;"
+                    send "  {@secondary}%{_n}% &8- &7%{_parts::1}%, %{_parts::2}%, %{_parts::3}% (%{_parts::4}%)"
+        if {_count} is 0:
+            send "  {@error}Brak domow. /sethome <nazwa>"
+        else:
+            send "  {@info}%{_count}%/%getMaxHomes(player)%"
+        send ""
+
+# ==================== COMBAT LOG ====================
+
+on damage of player:
+    attacker is a player
+    victim is a player
+    attacker is not victim
+    set {_a} to attacker's uuid
+    set {_v} to victim's uuid
+    if {combat::%{_a}%} is not set:
+        send action bar "&cJestes w walce!" to attacker
+    if {combat::%{_v}%} is not set:
+        send action bar "&cJestes w walce!" to victim
+    set {combat::%{_a}%} to now
+    set {combat::%{_v}%} to now
+    set {combat::opponent::%{_a}%} to victim's name
+    set {combat::opponent::%{_v}%} to attacker's name
+
+every 1 second:
+    loop all players:
+        set {_u} to loop-player's uuid
+        if {combat::%{_u}%} is set:
+            set {_diff} to difference between now and {combat::%{_u}%}
+            set {_sec} to {_diff} / 1 second
+            set {_rem} to {@combat-time} - {_sec}
+            if {_rem} <= 0:
+                delete {combat::%{_u}%}
+                delete {combat::opponent::%{_u}%}
+                send action bar "&aNie jestes juz w walce!" to loop-player
+            else:
+                send action bar "&cCOMBAT &8[&c%round({_rem})%s&8] &7vs &e%{combat::opponent::%{_u}%}%" to loop-player
+
+on command:
+    {combat::%player's uuid%} is set
+    set {_cmd} to first element of (command in lower case split by " ")
+    if {_cmd} is "home" or "spawn" or "tpa" or "tp" or "warp" or "rtp" or "back" or "hub":
+        cancel event
+        send "{@prefix} {@error}Nie podczas walki!"
+
+# ==================== RTP ====================
+
+function abs(n: number) :: number:
+    if {_n} < 0:
+        return {_n} * -1
+    return {_n}
+
+command /rtp:
+    aliases: /wild, /randomtp
+    cooldown: {@rtp-cooldown} seconds
+    cooldown message: {@prefix} {@error}Poczekaj %remaining time%!
+    trigger:
+        if {combat::%player's uuid%} is set:
+            send "{@prefix} {@error}Nie podczas walki!"
+            stop
+        send "{@prefix} {@info}Szukanie lokalizacji..."
+        set {_found} to false
+        set {_attempts} to 0
+        set {_w} to player's world
+        while {_found} is false:
+            add 1 to {_attempts}
+            if {_attempts} > 20:
+                send "{@prefix} {@error}Nie znaleziono bezpiecznego miejsca. Sprobuj ponownie!"
+                stop
+            set {_x} to random integer between (-1 * {@rtp-max-range}) and {@rtp-max-range}
+            set {_z} to random integer between (-1 * {@rtp-max-range}) and {@rtp-max-range}
+            if abs({_x}) < {@rtp-min-range}:
+                if {_x} >= 0:
+                    set {_x} to {@rtp-min-range}
+                else:
+                    set {_x} to -1 * {@rtp-min-range}
+            if abs({_z}) < {@rtp-min-range}:
+                if {_z} >= 0:
+                    set {_z} to {@rtp-min-range}
+                else:
+                    set {_z} to -1 * {@rtp-min-range}
+            set {_loc} to location({_x}, 255, {_z}, {_w})
+            set {_hb} to highest block at {_loc}
+            set {_y} to y-coordinate of {_hb} + 1
+            set {_below} to block at location({_x}, {_y} - 1, {_z}, {_w})
+            {_below} is not lava
+            {_below} is not water
+            {_below} is not air
+            set {_found} to true
+            set {_safe} to location({_x} + 0.5, {_y}, {_z} + 0.5, {_w})
+        send "{@prefix} {@info}Teleportacja za 3s..."
+        set {_start} to player's location
+        set {tp::pending::%player's uuid%} to true
+        wait 3 seconds
+        if {tp::pending::%player's uuid%} is not set:
+            stop
+        if distance between player's location and {_start} > 1:
+            send "{@prefix} {@error}Anulowano - ruszyles sie!"
+            delete {tp::pending::%player's uuid%}
+            stop
+        delete {tp::pending::%player's uuid%}
+        teleport player to {_safe}
+        send "{@prefix} {@success}Teleportowano! %round(x-coord of {_safe})%, %round(y-coord of {_safe})%, %round(z-coord of {_safe})%"
+        play sound "entity.enderman.teleport" at player
+
+# ==================== TPA ====================
+
+command /tpa <player>:
+    trigger:
+        if arg-1 is player:
+            send "{@prefix} {@error}Nie mozesz wyslac prosby do siebie!"
+            stop
+        if {combat::%player's uuid%} is set:
+            send "{@prefix} {@error}Nie podczas walki!"
+            stop
+        set {tpa::%arg-1's uuid%::%player's uuid%} to player
+        send "{@prefix} {@success}Wyslano prosbe do %arg-1%"
+        send "{@prefix} {@info}%player% prosi o teleportacje!" to arg-1
+        send "{@prefix} {@success}/tpaccept {@info}| {@error}/tpdeny" to arg-1
+        wait 60 seconds
+        if {tpa::%arg-1's uuid%::%player's uuid%} is set:
+            delete {tpa::%arg-1's uuid%::%player's uuid%}
+            send "{@prefix} {@error}Prosba wygasla!" to player
+
+command /tpaccept: # Skript napisany przez Tony_Maxi(dc: youngtony_112) dla BlockCode
+    trigger:
+        set {_u} to player's uuid
+        set {_found} to false
+        loop {tpa::%{_u}%::*}:
+            set {_req} to loop-value
+            delete {tpa::%{_u}%::%loop-index%}
+            set {_found} to true
+            exit loop
+        if {_found} is false:
+            send "{@prefix} {@error}Brak oczekujacych prosb!"
+            stop
+        if {_req} is not online:
+            send "{@prefix} {@error}Gracz jest offline!"
+            stop
+        teleport {_req} to player
+        send "{@prefix} {@success}Teleportowano %{_req}% do Ciebie!"
+        send "{@prefix} {@success}Zaakceptowano prosbe! Teleportacja..." to {_req}
+
+command /tpdeny:
+    trigger:
+        set {_u} to player's uuid
+        set {_found} to false
+        loop {tpa::%{_u}%::*}:
+            set {_req} to loop-value
+            delete {tpa::%{_u}%::%loop-index%}
+            set {_found} to true
+            exit loop
+        if {_found} is false:
+            send "{@prefix} {@error}Brak oczekujacych prosb!"
+            stop
+        send "{@prefix} {@error}Odrzucono prosbe gracza %{_req}%"
+
+# ==================== SPAWN ====================
+
+command /setspawn:
+    permission: blockcode.setspawn
+    trigger:
+        set {server::spawn} to player's location
+        mongoSaveSpawn(player's location)
+        send "{@prefix} {@success}Spawn zapisany do bazy danych!"
+
+command /spawn:
+    trigger:
+        set {_spawn} to mongoGetSpawn()
+        if {_spawn} is not set:
+            send "{@prefix} {@error}Spawn nie jest ustawiony!"
+            stop
+        if {combat::%player's uuid%} is set:
+            send "{@prefix} {@error}Nie podczas walki!"
+            stop
+        send "{@prefix} {@info}Teleportacja za 3s..."
+        set {_loc} to player's location
+        set {tp::pending::%player's uuid%} to true
+        wait 3 seconds
+        if {tp::pending::%player's uuid%} is not set:
+            stop
+        if distance between player's location and {_loc} > 1:
+            send "{@prefix} {@error}Anulowano - ruszyles sie!"
+            delete {tp::pending::%player's uuid%}
+            stop
+        delete {tp::pending::%player's uuid%}
+        teleport player to {_spawn}
+        send "{@prefix} {@success}Teleportowano na spawn!"
+
+# ==================== BACK ====================
+
+on death of player:
+    set {back::%player's uuid%} to player's location
+
+command /back:
+    trigger:
+        if {back::%player's uuid%} is not set:
+            send "{@prefix} {@error}Brak lokalizacji powrotu!"
+            stop
+        if {combat::%player's uuid%} is set:
+            send "{@prefix} {@error}Nie podczas walki!"
+            stop
+        teleport player to {back::%player's uuid%}
+        send "{@prefix} {@success}Powrocono na miejsce zgonu!"
+        delete {back::%player's uuid%}
+
+# ==================== WARPY ====================
+
+command /setwarp <text>:
+    permission: blockcode.warp.set
+    trigger:
+        set {_n} to arg-1 in lower case
+        mongoSaveWarp({_n}, player's location, player's name)
+        send "{@prefix} {@success}Warp %{_n}% zapisany do bazy danych!"
+
+command /delwarp <text>:
+    permission: blockcode.warp.delete
+    trigger:
+        set {_n} to arg-1 in lower case
+        set {_loc} to mongoGetWarp({_n})
+        if {_loc} is not set:
+            send "{@prefix} {@error}Warp nie istnieje!"
+            stop
+        mongoDeleteWarp({_n})
+        send "{@prefix} {@success}Warp %{_n}% usuniety z bazy danych!"
+
+command /warp [<text>]:
+    trigger:
+        if arg-1 is not set:
+            send ""
+            send "  {@primary}Lista warpow:"
+            set {_c} to 0
+            set {_docs} to all mongo documents of {mongo::warps}
+            loop {_docs}:
+                set {_name} to mongo value "name" of loop-value
+                set {_creator} to mongo value "creator" of loop-value
+                if {_name} is set:
+                    add 1 to {_c}
+                    send "  {@secondary}%{_name}% &8(tworca: %{_creator}%)"
+            if {_c} is 0:
+                send "  {@error}Brak utworzonych warpow!"
+            send ""
+            stop
+        set {_n} to arg-1 in lower case
+        set {_loc} to mongoGetWarp({_n})
+        if {_loc} is not set:
+            send "{@prefix} {@error}Warp nie istnieje!"
+            stop
+        if {combat::%player's uuid%} is set:
+            send "{@prefix} {@error}Nie podczas walki!"
+            stop
+        teleport player to {_loc}
+        send "{@prefix} {@success}Teleportowano do warpu %{_n}%!"
+
+# ==================== STATYSTYKI ====================
+
+on death of player:
+    attacker is a player
+    add 1 to {stats::kills::%attacker's uuid%}
+    add 1 to {stats::deaths::%victim's uuid%}
+    add 1 to {stats::streak::%attacker's uuid%}
+    set {stats::streak::%victim's uuid%} to 0
+    mongoIncPlayer("%attacker's uuid%", "kills", 1)
+    mongoIncPlayer("%victim's uuid%", "deaths", 1)
+    mongoSavePlayerNum("%attacker's uuid%", "streak", {stats::streak::%attacker's uuid%})
+    mongoSavePlayerNum("%victim's uuid%", "streak", 0)
+    if mod({stats::streak::%attacker's uuid%}, 5) is 0 and {stats::streak::%attacker's uuid%} >= 5:
+        broadcast "{@prefix} {@primary}%attacker% &ema serie &b%{stats::streak::%attacker's uuid%}% &ezabojstw!"
+    set {_r} to random integer between 10 and 50
+    add {_r} to {eco::balance::%attacker's uuid%}
+    send "{@prefix} {@success}+%{_r}% monet za likwidacje %victim%!" to attacker # Skript napisany przez Tony_Maxi(dc: youngtony_112) dla BlockCode
+
+on death of monster:
+    attacker is a player
+    add 1 to {stats::mobKills::%attacker's uuid%}
+    set {_r} to random integer between 1 and 15
+    add {_r} to {eco::balance::%attacker's uuid%}
+    send action bar "{@success}+%{_r}%" to attacker
+
+on break:
+    add 1 to {stats::blocksBroken::%player's uuid%}
+
+on place:
+    add 1 to {stats::blocksPlaced::%player's uuid%}
+
+every 1 minute:
+    loop all players:
+        add 60 to {stats::playtime::%loop-player's uuid%}
+
+function formatTime(s: number) :: text:
+    set {_d} to floor({_s} / 86400)
+    set {_rem} to mod({_s}, 86400)
+    set {_h} to floor({_rem} / 3600)
+    set {_rem} to mod({_rem}, 3600)
+    set {_m} to floor({_rem} / 60)
+    set {_r} to ""
+    if {_d} > 0:
+        set {_r} to "%{_d}%d "
+    if {_h} > 0:
+        set {_r} to "%{_r}%%{_h}%h "
+    set {_r} to "%{_r}%%{_m}%m"
+    return {_r}
+
+command /profile [<offlineplayer>]:
+    aliases: /stats
+    trigger:
+        set {_t} to arg-1 ? player
+        set {_u} to "%{_t}'s uuid%"
+        set {_k} to mongoGetPlayerNum({_u}, "kills")
+        set {_d} to mongoGetPlayerNum({_u}, "deaths")
+        set {_pt} to mongoGetPlayerNum({_u}, "playtime")
+        set {_bb} to mongoGetPlayerNum({_u}, "blocksBroken")
+        set {_bp} to mongoGetPlayerNum({_u}, "blocksPlaced")
+        set {_mk} to mongoGetPlayerNum({_u}, "mobKills")
+        set {_j} to mongoGetPlayerNum({_u}, "joins")
+        set {_st} to mongoGetPlayerNum({_u}, "streak")
+        set {_bal} to mongoGetPlayerNum({_u}, "balance")
+        set {_kdr} to "0.00"
+        if {_d} > 0:
+            set {_kdr} to "%{_k} / {_d}%"
+        send ""
+        send "  &8&m                                          "
+        send "  {@primary}Profil gracza: {@secondary}%{_t}%"
+        send "  &8&m                                          "
+        send "  {@info}Zabojstwa: {@primary}%{_k}%   {@info}Smierci: {@primary}%{_d}%   {@info}K/D: {@primary}%{_kdr}%"
+        send "  {@info}Streak: {@primary}%{_st}%   {@info}Moby: {@primary}%{_mk}%"
+        send "  {@info}Bloki: {@primary}%{_bb}% broken / %{_bp}% placed"
+        send "  {@info}Saldo: {@primary}%{_bal}%   {@info}Czas online: {@primary}%formatTime({_pt})%"
+        send "  {@info}Odwiedziny: {@primary}%{_j}%"
+        send "  &8&m                                          "
+        send ""
+
+# ==================== CZAT ====================
+
+on chat:
+    cancel event
+    set {_u} to player's uuid
+    set {_color} to {chat::color::%{_u}%} ? "&f"
+    set {_rank} to "&7[Gracz] "
+    if player has permission "blockcode.rank.owner":
+        set {_rank} to "&4[OWNER] "
+    else if player has permission "blockcode.rank.admin":
+        set {_rank} to "&c[ADMIN] "
+    else if player has permission "blockcode.rank.mod":
+        set {_rank} to "&9[MOD] "
+    else if player has permission "blockcode.rank.vip":
+        set {_rank} to "&b[VIP] "
+    if {chat::lastmsg::%{_u}%} is message:
+        add 1 to {chat::spam::%{_u}%}
+        if {chat::spam::%{_u}%} >= 3:
+            send "{@prefix} {@error}Nie pisz tak szybko!" to player
+            stop
+    else:
+        set {chat::spam::%{_u}%} to 0
+    set {chat::lastmsg::%{_u}%} to message
+    loop all players:
+        if message contains loop-player's name:
+            play sound "entity.experience_orb.pickup" with volume 0.5 at loop-player
+    broadcast "%{_rank}%&e%player% &8> %{_color}%%message%"
+
+command /chatcolor <text>:
+    permission: blockcode.chatcolor
+    trigger:
+        set {_c} to arg-1
+        if length of {_c} is 2 and first character of {_c} is "&":
+            set {chat::color::%player's uuid%} to {_c}
+            mongoSavePlayer("%player's uuid%", "chatcolor", {_c})
+            send "{@prefix} {@success}Kolor czatu zostal ustawiony na: %{_c}%test"
+        else:
+            send "{@prefix} {@error}Podaj poprawny kod koloru np. &a, &b, &6, &e"
+
+# ==================== AFK ====================
+
+every 30 seconds:
+    loop all players:
+        set {_u} to loop-player's uuid
+        if {afk::last::%{_u}%} is set:
+            set {_diff} to difference between now and {afk::last::%{_u}%}
+            if {_diff} is greater than {@afk-time} seconds:
+                if {afk::on::%{_u}%} is not true:
+                    set {afk::on::%{_u}%} to true
+                    broadcast "{@prefix} {@secondary}%loop-player% odszedl od komputera (AFK)"
+
+on any movement:
+    if {afk::on::%player's uuid%} is true:
+        set {afk::on::%player's uuid%} to false
+        broadcast "{@prefix} {@secondary}%player% wrocil do gry"
+    set {afk::last::%player's uuid%} to now
+
+on chat:
+    set {afk::last::%player's uuid%} to now
+    if {afk::on::%player's uuid%} is true:
+        set {afk::on::%player's uuid%} to false
+        broadcast "{@prefix} {@secondary}%player% wrocil do gry"
+
+command /afk:
+    trigger:
+        if {afk::on::%player's uuid%} is true:
+            set {afk::on::%player's uuid%} to false
+            set {afk::last::%player's uuid%} to now
+            broadcast "{@prefix} {@secondary}%player% wrocil do gry"
+        else:
+            set {afk::on::%player's uuid%} to true
+            broadcast "{@prefix} {@secondary}%player% jest teraz AFK"
+
+# ==================== WIADOMOSCI PRYWATNE ====================
+
+command /msg <player> <text>:
+    aliases: /tell, /w, /pm
+    trigger:
+        if arg-1 is player:
+            send "{@prefix} {@error}Nie mozesz pisac do samego siebie!"
+            stop
+        send "&8[&bTY &8-> &b%arg-1%&8] &f%arg-2%"
+        send "&8[&b%player% &8-> &bTY&8] &f%arg-2%" to arg-1
+        set {msg::reply::%arg-1's uuid%} to player
+
+command /reply <text>:
+    aliases: /r
+    trigger:
+        if {msg::reply::%player's uuid%} is not set:
+            send "{@prefix} {@error}Brak osoby do odpowiedzi!"
+            stop
+        set {_t} to {msg::reply::%player's uuid%}
+        if {_t} is not online:
+            send "{@prefix} {@error}Gracz jest juz offline!"
+            stop
+        send "&8[&bTY &8-> &b%{_t}%&8] &f%arg-1%"
+        send "&8[&b%player% &8-> &bTY&8] &f%arg-1%" to {_t}
+        set {msg::reply::%{_t}'s uuid%} to player
+
+# ==================== MENU GUI ====================
+
+command /menu:
+    aliases: /gui
+    trigger:
+        open chest inventory with 3 rows named "&8&lBlockCode Menu" to player
+        wait 1 tick
+        set slot 10 of player's current inventory to player's skull named "&b&lProfil" with lore "&7Twoje statystyki gry"
+        set slot 12 of player's current inventory to gold ingot named "&6&lEkonomia" with lore "&7Stan konta: &e%{eco::balance::%player's uuid%} ? 0%"
+        set slot 14 of player's current inventory to red bed named "&c&lDomy" with lore "&7Zarzadzanie domami /homes"
+        set slot 16 of player's current inventory to ender pearl named "&b&lWarpy" with lore "&7Dostepne lokacje serwerowe /warp"
+
+on inventory click:
+    name of player's current inventory is "&8&lBlockCode Menu"
+    cancel event
+    if clicked slot is 10:
+        close player's inventory
+        execute player command "/profile"# Skript napisany przez Tony_Maxi(dc: youngtony_112) dla BlockCode
+    else if clicked slot is 12:
+        close player's inventory
+        execute player command "/money"
+    else if clicked slot is 14:
+        close player's inventory
+        execute player command "/homes"
+    else if clicked slot is 16:
+        close player's inventory
+        execute player command "/warp"
+
+# ==================== ADMIN ====================
+
+command /heal [<player>]:
+    permission: blockcode.heal
+    trigger:
+        set {_t} to arg-1 ? player
+        heal {_t}
+        set {_t}'s food level to 20
+        send "{@prefix} {@success}Uleczono gracza %{_t}%!" to player
+
+command /feed [<player>]:
+    permission: blockcode.feed
+    trigger:
+        set {_t} to arg-1 ? player
+        set {_t}'s food level to 20
+        set {_t}'s saturation to 20
+        send "{@prefix} {@success}Nakarmiono gracza %{_t}%!" to player
+
+command /gm <integer>:
+    permission: blockcode.gamemode
+    trigger:
+        if arg-1 is 0:
+            set player's gamemode to survival
+        else if arg-1 is 1:
+            set player's gamemode to creative
+        else if arg-1 is 2:
+            set player's gamemode to adventure
+        else if arg-1 is 3:
+            set player's gamemode to spectator
+        else:
+            send "{@prefix} {@error}Wybierz tryb od 0 do 3!"
+            stop
+        send "{@prefix} {@success}Tryb zostal zmieniony na: %arg-1%"
+
+command /ec:
+    permission: blockcode.enderchest
+    trigger:
+        open player's ender chest to player
+
+command /skull <offlineplayer>:
+    permission: blockcode.skull
+    trigger:
+        give arg-1's skull to player
+        send "{@prefix} {@success}Otrzymano glowe gracza %arg-1%!"
+
+command /rename <text>:
+    permission: blockcode.rename
+    trigger:
+        if player's tool is air:
+            send "{@prefix} {@error}Musisz trzymac przedmiot w dloni!"
+            stop
+        set {_cost} to 50
+        if {eco::balance::%player's uuid%} < {_cost}:
+            send "{@prefix} {@error}Wymagane %{_cost}% monet!"
+            stop
+        remove {_cost} from {eco::balance::%player's uuid%}
+        set name of player's tool to colored arg-1
+        send "{@prefix} {@success}Nazwa zmieniona! Pobrano %{_cost}% monet."
+
+# ==================== PANEL BAZY DANYCH ====================
+
+# Skript napisany przez Tony_Maxi(dc: youngtony_112) dla BlockCode
+command /bcadmin [<text>] [<text>]:
+    permission: blockcode.admin
+    aliases: /bca
+    trigger:
+        if arg-1 is not set:
+            send ""
+            send "  {@primary}BlockCode-Core Panel Administracyjny"
+            send "  &8&m                                    "
+            send "  {@info}/bca status - Status polaczenia z baza"
+            send "  {@info}/bca save - Wymuszenie zapisu do MongoDB"
+            send "  {@info}/bca reload - Odswiezenie cache graczy"
+            send "  {@info}/bca purge - Czyszczenie danych tymczasowych"
+            send "  {@info}/bca dbstats - Statystyki kolekcji MongoDB"
+            send ""
+            stop
+        if arg-1 is "status":
+            if {mongo::client} is set:
+                send "{@prefix} {@success}MongoDB: Aktywne polaczenie"
+                send "{@prefix} {@info}Baza: {@primary}{@mongo-database}"
+                send "{@prefix} {@info}URI: {@primary}{@mongo-uri}"
+            else:
+                send "{@prefix} {@error}MongoDB: Brak polaczenia!"
+            stop
+        if arg-1 is "save":
+            loop all players:
+                savePlayerData(loop-player)
+            send "{@prefix} {@success}Zrzut pamieci RAM do MongoDB zakonczony!"
+            stop
+        if arg-1 is "reload":
+            loop all players:
+                loadPlayerData(loop-player)
+            send "{@prefix} {@success}Dane zostaly przeladowane z MongoDB!"
+            stop
+        if arg-1 is "purge":
+            delete {temp::*}
+            delete {combat::*}
+            delete {tpa::*}
+            delete {tp::*}
+            send "{@prefix} {@success}Wyczyszczono pamiec podreczna sesji walki i teleportacji!"
+            stop
+        if arg-1 is "dbstats":
+            set {_docs} to all mongo documents of {mongo::players}
+            set {_playerCount} to 0
+            set {_totalBal} to 0
+            loop {_docs}:
+                add 1 to {_playerCount}
+                set {_b} to mongo value "balance" of loop-value
+                if {_b} is set:
+                    add {_b} to {_totalBal}
+            set {_warpDocs} to all mongo documents of {mongo::warps}
+            set {_warpCount} to 0
+            loop {_warpDocs}:
+                add 1 to {_warpCount}
+            send ""
+            send "  {@primary}Statystyki Bazy Danych"
+            send "  &8&m                                    "
+            send "  {@info}Zapisanych graczy: {@primary}%{_playerCount}%"
+            send "  {@info}Calkowita waluta w obiegu: {@primary}%{_totalBal}% {@currency-name-plural}"
+            send "  {@info}Liczba warpow: {@primary}%{_warpCount}%"
+            send "  {@info}Aktywni gracze online: {@primary}%number of all players%"
+            send ""
+            stop
+        send "{@prefix} {@error}Nieznana opcja. Wpisz /bca"
+
+# ==================== ANNOUNCER ====================
+
+every 5 minutes:
+    add 1 to {server::annIdx}
+    if {server::annIdx} > 5:
+        set {server::annIdx} to 1
+    set {_a::1} to "&bOtworz glowne menu pod komenda &e/menu"
+    set {_a::2} to "&bSprawdz stan swojego konta: &e/money"
+    set {_a::3} to "&bUstaw bezpieczny dom: &e/sethome <nazwa>"
+    set {_a::4} to "&bSprawdz swoje statystyki pvp: &e/profile"
+    set {_a::5} to "&bWyrusz w losowe koordynaty: &e/rtp"
+    broadcast ""
+    broadcast "  %{_a::%{server::annIdx}%}%"
+    broadcast ""
+
+# ==================== ZGONY ====================
+
+on death of player:
+    set {_v} to victim
+    set {_a} to attacker
+    if {_a} is a player:
+        set {_msgs::1} to "{@prefix} &c%{_v}% &7zostal pokonany przez &c%{_a}%&7!"
+        set {_msgs::2} to "{@prefix} &c%{_a}% &7wyeliminowal gracza &c%{_v}%&7!"
+        set {_msgs::3} to "{@prefix} &c%{_v}% &7polegl w walce z &c%{_a}%&7!"
+        set {_r} to random integer between 1 and 3
+        set death message to {_msgs::%{_r}%}
+    else:
+        set {_msgs::1} to "{@prefix} &c%{_v}% &7zginal z przyczyn naturalnych."
+        set {_msgs::2} to "{@prefix} &c%{_v}% &7nie przezyl starcia ze swiatem gry."
+        set {_r} to random integer between 1 and 2
+        set death message to {_msgs::%{_r}%}
+
+# ==================== POMOC ====================
+
+command /help:
+    aliases: /pomoc
+    trigger:
+        send ""
+        send "  &8&m                                          "
+        send "  {@primary}BlockCode-Core - Pomoc"
+        send "  &8&m                                          "
+        send "  {@info}/home, /sethome, /homes, /delhome"
+        send "  {@info}/tpa, /tpaccept, /tpdeny"
+        send "  {@info}/warp, /spawn, /rtp, /back"
+        send "  {@info}/money, /money pay, /money top"
+        send "  {@info}/msg, /reply, /profile, /afk"
+        send "  {@info}/menu, /rename, /ec, /chatcolor"
+        send "  &8&m                                          "
+        send ""
+
+# Skript napisany przez Tony_Maxi(dc: youngtony_112) dla BlockCode

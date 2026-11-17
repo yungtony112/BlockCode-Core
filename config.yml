@@ -1,0 +1,33 @@
+# ============================================================
+# BlockCode-Core v1.0-SNAPSHOT - Konfiguracja wzorcowa
+# Te same wartosci wpisz w sekcji 'options:' w pliku BlockCode-Core.sk
+# Autor: Tony_Maxi dc:youngtony_112
+# ============================================================
+
+# Polaczenie MongoDB
+mongo-uri: "mongodb://localhost:27017"
+mongo-database: "blockcode"
+
+# Prefix i kolory w grze
+prefix: "&8[&bBlockCode&8]&r"
+
+# Combat Log
+combat-time: 15
+
+# Ekonomia
+starting-balance: 1000
+currency-name: "Coin"
+currency-name-plural: "Coins"
+
+# Limity domow
+max-homes-default: 3
+max-homes-vip: 7
+max-homes-admin: 15
+
+# RTP
+rtp-min-range: 500
+rtp-max-range: 5000
+rtp-cooldown: 60
+
+# AFK
+afk-time: 300
